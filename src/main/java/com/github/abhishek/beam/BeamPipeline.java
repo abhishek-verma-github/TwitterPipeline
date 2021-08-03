@@ -8,7 +8,6 @@ export PIPELINE_FOLDER=gs://${PROJECT_ID}
 export MAIN_CLASS_NAME=com.mypackage.pipeline.MyPipeline
 export RUNNER=DataflowRunner
 
-cd $BASE_DIR
 mvn compile exec:java \
 -Dexec.mainClass=${MAIN_CLASS_NAME} \
 -Dexec.cleanupDaemonThreads=false \
@@ -18,6 +17,7 @@ mvn compile exec:java \
 --stagingLocation=${PIPELINE_FOLDER}/staging \
 --tempLocation=${PIPELINE_FOLDER}/temp \
 --runner=${RUNNER}"
+--table=${PROJECT_ID:DATASET.TABLE}
  */
 
 import com.google.common.collect.ImmutableMap;
@@ -82,12 +82,12 @@ public class BeamPipeline {
         void setTable(String table);
 
         @Description("Window Duration")
-        @Default.Long(30)
+        @Default.Long(60)
         long getWindowDuration();
         void setWindowDuration(long duration);
 
-        @Description("Window lateness")
-        @Default.Long(40)
+        @Description("Window lateness [minutes]")
+        @Default.Long(10)
         long getAllowedLateness();
         void setAllowedLateness(long lateness);
     }
@@ -100,17 +100,8 @@ public class BeamPipeline {
                                                 .withValidation()
                                                 .as(Options.class);
 
-        Pipeline pipeline = Pipeline.create(options);
-        options.setJobName("streaming-twitter-kafka-pipeline-" + System.currentTimeMillis());
-        options.setWindowDuration(30);
-        options.setAllowedLateness(0);
-        options.setTopic("twitter_tweets");
-        options.setTempLocation("gs://learning-project-1168/tmp");
 
-
-        pipeline.getSchemaRegistry().registerPOJO(Tweet.class);
-
-        BeamPipeline.runPipeline(pipeline);
+        BeamPipeline.runPipeline(options);
 
     }
 
@@ -179,9 +170,17 @@ public class BeamPipeline {
 
 
 
-    public static void runPipeline(Pipeline pipeline){
+    public static void runPipeline(Options options){
 
         // create beam pipeline
+        Pipeline pipeline = Pipeline.create(options);
+        options.setJobName("streaming-twitter-kafka-pipeline-" + System.currentTimeMillis());
+        options.setWindowDuration(30);
+        options.setAllowedLateness(0);
+        options.setTopic("twitter_tweets");
+
+
+        pipeline.getSchemaRegistry().registerPOJO(Tweet.class);
 
         PCollection<String> rawTweets = pipeline.apply("read from kafka source",KafkaIO.<String, String>read()
                                                                                 .withBootstrapServers("127.0.0.1:9092")
@@ -191,11 +190,11 @@ public class BeamPipeline {
                                                                             // .withConsumerConfigUpdates(ImmutableMap.of("group.id", "my_beam_app_1")) // settings for ConsumerConfig. e.g :
                                                                                 .withoutMetadata())
                                                 // get value only skip keys [remove following if using key if more than one partition]
-                                                .apply(Values.<String>create())
+                                                .apply(Values.create())
 
         .apply("WindowByMinute", Window.<String>into(
                 FixedWindows.of(Duration.standardSeconds(60))).withAllowedLateness(
-                Duration.standardSeconds(120))
+                Duration.standardMinutes(5))
                 .triggering(AfterWatermark.pastEndOfWindow()
                         .withLateFirings(AfterPane.elementCountAtLeast(200)))
                 .accumulatingFiredPanes());
@@ -221,7 +220,7 @@ public class BeamPipeline {
         })).setRowSchema(BQSchema);
 
         // to big query
-        rows.apply("Write to BigQuery", BigQueryIO.<Row>write().to("learning-project-1168:TwitterStreams.tweets") // [optioins.getTable()]
+        rows.apply("Write to BigQuery", BigQueryIO.<Row>write().to(options.getTable()) // [optioins.getTable()]
                 .useBeamSchema()
                 .withWriteDisposition(BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
                 .withCreateDisposition(BigQueryIO.Write.CreateDisposition.CREATE_IF_NEEDED));
@@ -232,7 +231,7 @@ public class BeamPipeline {
          */
 
         // test write to file
-        // rawTweets.apply(TextIO.write().to("pipe").withWindowedWrites().withNumShards(1).withSuffix(".txt"));
+        // rawTweets.apply(TextIO.write().to("/tmp/tweets").withWindowedWrites().withNumShards(1).withSuffix(".txt"));
 
 
         pipeline.run().waitUntilFinish();
