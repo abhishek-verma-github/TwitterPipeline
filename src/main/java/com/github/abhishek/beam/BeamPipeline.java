@@ -8,7 +8,9 @@ export PIPELINE_FOLDER=gs://${PROJECT_ID}
 export MAIN_CLASS_NAME=com.mypackage.pipeline.MyPipeline
 export RUNNER=DataflowRunner
 
-mvn compile exec:java \
+export GOOGLE_APPLICATION_CREDENTIALS={PATH_TO_JSON}
+
+mvn -Pdataflow-runner compile exec:java \
 -Dexec.mainClass=${MAIN_CLASS_NAME} \
 -Dexec.cleanupDaemonThreads=false \
 -Dexec.args=" \
@@ -16,14 +18,18 @@ mvn compile exec:java \
 --region=${REGION} \
 --stagingLocation=${PIPELINE_FOLDER}/staging \
 --tempLocation=${PIPELINE_FOLDER}/temp \
---runner=${RUNNER}"
+--runner=${RUNNER}"[DataflowRunner]
 --table=${PROJECT_ID:DATASET.TABLE}
  */
 
+import com.google.api.services.bigquery.model.TableFieldSchema;
+import com.google.api.services.bigquery.model.TableRow;
+import com.google.api.services.bigquery.model.TableSchema;
 import com.google.common.collect.ImmutableMap;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonParser;
+import org.apache.beam.runners.dataflow.DataflowRunner;
 import org.apache.beam.sdk.Pipeline;
 import org.apache.beam.sdk.coders.CoderRegistry;
 import org.apache.beam.sdk.io.TextIO;
@@ -31,10 +37,8 @@ import org.apache.beam.sdk.options.Default;
 import org.apache.beam.sdk.options.Description;
 import org.apache.beam.sdk.options.PipelineOptions;
 import org.apache.beam.sdk.options.PipelineOptionsFactory;
-import org.apache.beam.sdk.schemas.JavaFieldSchema;
-import org.apache.beam.sdk.schemas.Schema;
-import org.apache.beam.sdk.schemas.annotations.DefaultSchema;
-import org.apache.beam.sdk.schemas.transforms.Select;
+import org.apache.beam.runners.dataflow.options.DataflowPipelineOptions;
+
 import org.apache.beam.sdk.transforms.*;
 import org.apache.beam.sdk.transforms.windowing.*;
 import org.apache.beam.sdk.values.PCollection;
@@ -43,7 +47,6 @@ import org.apache.beam.sdk.io.kafka.KafkaRecord;
 import org.apache.beam.sdk.io.gcp.bigquery.BigQueryIO;
 
 import org.apache.beam.sdk.values.Row;
-import org.apache.kafka.common.serialization.IntegerDeserializer;
 import org.apache.kafka.common.serialization.StringDeserializer;
 import org.joda.time.Duration;
 import org.slf4j.Logger;
@@ -53,7 +56,7 @@ import com.github.abhishek.beam.Tweet;
 
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
-import java.time.Instant;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Locale;
 
@@ -62,18 +65,18 @@ public class BeamPipeline {
     private final static Logger logger = LoggerFactory.getLogger(BeamPipeline.class.getName());
 
 
-    public interface Options extends PipelineOptions {
+    public interface Options extends DataflowPipelineOptions {
         // source options
         @Description("Input Kafka Topic")
         @Default.String("twitter_tweets")
         String getTopic();
         void setTopic(String topic);
 
+
         @Description("Consumer Group")
         @Default.String("beam-driver-application")
         String getConsumerGroup();
         void setConsumerGroup(String group);
-
 
         // Sink Options
         @Description("Output for the pipeline")
@@ -96,12 +99,21 @@ public class BeamPipeline {
     public static void main(String[] args) {
 
         PipelineOptionsFactory.register(Options.class);
-        Options options = PipelineOptionsFactory.fromArgs(args)
-                                                .withValidation()
-                                                .as(Options.class);
+//        Options options = PipelineOptionsFactory.fromArgs(args)
+//                                                .withValidation()
+//                                                .as(Options.class);
+
+        DataflowPipelineOptions options = PipelineOptionsFactory.fromArgs(args).as(Options.class);
+
+        // For cloud execution, set the Google Cloud project, staging location,
+        // and set DataflowRunner.
+        options.setProject("learning-project-1168");
+        options.setStagingLocation("gs://learning-project-1168/staging/");
+        options.setGcpTempLocation("gs://learning-project-1168/tmp/");
+        options.setRunner(DataflowRunner.class);
 
 
-        BeamPipeline.runPipeline(options);
+        BeamPipeline.runPipeline((Options) options);
 
     }
 
@@ -148,25 +160,34 @@ public class BeamPipeline {
     }
 
     // BigQuery Schema:
-    public static final Schema BQSchema = Schema.builder()
-            .addStringField("user_id")
-            .addStringField("user_name")
-            .addStringField("screen_name")
-            .addStringField("location")
-            .addStringField("url")
-            .addStringField("description")
-            .addInt64Field("followers_count")
-            .addInt64Field("friends_count")
-            .addInt64Field("favourite_count")
-            .addInt64Field("statuses_count")
-            .addDateTimeField("user_created_at")
-            .addStringField("time_zone")
-            .addDateTimeField("tweet_created_at")
-            .addStringField("tweet_id")
-            .addStringField("text")
-            .addStringField("source")
-            .addInt64Field("retweet_count")
-            .build();
+
+    public static TableSchema tableSchema = new TableSchema().setFields(
+            Arrays.asList(
+                    new TableFieldSchema().setName("user_id").setType("STRING").setMode("REQUIRED"),
+                    new TableFieldSchema().setName("user_name").setType("STRING").setMode("REQUIRED"),
+                    new TableFieldSchema().setName("screen_name").setType("STRING").setMode("NULLABLE"),
+                    new TableFieldSchema().setName("location").setType("STRING").setMode("NULLABLE"),
+                    new TableFieldSchema().setName("url").setType("STRING").setMode("NULLABLE"),
+                    new TableFieldSchema().setName("description").setType("STRING").setMode("NULLABLE"),
+
+                    new TableFieldSchema().setName("followers_count").setType("INT64").setMode("REQUIRED"),
+                    new TableFieldSchema().setName("friends_count").setType("INT64").setMode("REQUIRED"),
+                    new TableFieldSchema().setName("favourite_count").setType("INT64").setMode("NULLABLE"),
+                    new TableFieldSchema().setName("statuses_count").setType("INT64").setMode("NULLABLE"),
+
+                    new TableFieldSchema().setName("user_created_at").setType("DATETIME").setMode("REQUIRED"),
+
+                    new TableFieldSchema().setName("time_zone").setType("STRING").setMode("NULLABLE"),
+
+                    new TableFieldSchema().setName("tweet_created_at").setType("DATETIME").setMode("REQUIRED"),
+
+                    new TableFieldSchema().setName("tweet_id").setType("STRING").setMode("REQUIRED"),
+                    new TableFieldSchema().setName("text").setType("STRING").setMode("REQUIRED"),
+                    new TableFieldSchema().setName("source").setType("STRING").setMode("NULLABLE"),
+
+                    new TableFieldSchema().setName("retweet_count").setType("INT64").setMode("NULLABLE")
+                )
+            );
 
 
 
@@ -178,6 +199,8 @@ public class BeamPipeline {
         options.setWindowDuration(30);
         options.setAllowedLateness(0);
         options.setTopic("twitter_tweets");
+        options.setRunner(DataflowRunner.class);
+        options.setTable("learning-project-1168:TwitterStreams.tweets");
 
 
         pipeline.getSchemaRegistry().registerPOJO(Tweet.class);
@@ -191,37 +214,55 @@ public class BeamPipeline {
                                                                                 .withoutMetadata())
                                                 // get value only skip keys [remove following if using key if more than one partition]
                                                 .apply(Values.create())
+                                                // Apply Window
+                                                .apply("WindowByMinute", Window.<String>into(
+                                                        FixedWindows.of(Duration.standardSeconds(60))).withAllowedLateness(
+                                                        Duration.standardMinutes(5))
+                                                        .triggering(AfterWatermark.pastEndOfWindow()
+                                                                .withLateFirings(AfterPane.elementCountAtLeast(200)))
+                                                        .accumulatingFiredPanes());
 
-        .apply("WindowByMinute", Window.<String>into(
-                FixedWindows.of(Duration.standardSeconds(60))).withAllowedLateness(
-                Duration.standardMinutes(5))
-                .triggering(AfterWatermark.pastEndOfWindow()
-                        .withLateFirings(AfterPane.elementCountAtLeast(200)))
-                .accumulatingFiredPanes());
-
+        // (Apply Schema for complex transforms).
         PCollection<Tweet> tweets = rawTweets.apply(ParDo.of(new ParseTweet()));
 
+        // Filter by followers
         tweets.apply(Filter.by(new SerializableFunction<Tweet, Boolean>() {
-            @Override
             public Boolean apply(Tweet input) {
-                return input.followers_count > 40_000;
+                return input.followers_count > 40000;
             }
         }));
 
-        PCollection<Row> rows = tweets.apply("ConvertToRow", ParDo.of(new DoFn<Tweet, Row>() {
-            @ProcessElement
-            public void processElement(@Element Tweet tweet, OutputReceiver<Row> r) {
+        // map to TableRows to write to BigQuery.
+        PCollection<TableRow> tableRows = tweets.apply(MapElements.via(
+                new SimpleFunction<Tweet, TableRow>() {
+                    @Override
+                    public TableRow apply(Tweet tweet) {
 
-                Row row = Row.withSchema(BQSchema)
-                        .addValues(tweet)
-                        .build();
-                r.output(row);
-            }
-        })).setRowSchema(BQSchema);
+                        return new TableRow().set("user_id",tweet.user_id)
+                                                .set("user_id",tweet.user_id)
+                                                .set("user_name",tweet.user_name)
+                                                .set("screen_name",tweet.screen_name)
+                                                .set("location",tweet.location)
+                                                .set("url",tweet.url)
+                                                .set("description",tweet.description)
+                                                .set("followers_count",tweet.followers_count)
+                                                .set("friends_count",tweet.friends_count)
+                                                .set("favourite_count",tweet.favourites_count)
+                                                .set("statuses_count",tweet.statuses_count)
+                                                .set("user_created_at",tweet.user_created_at)
+                                                .set("time_zone",tweet.time_zone)
+                                                .set("tweet_created_at",tweet.created_at)
+                                                .set("tweet_id",tweet.id)
+                                                .set("text",tweet.text)
+                                                .set("source",tweet.source)
+                                                .set("retweet_count",tweet.retweet_counts);
+                    }
+                }
+        ));
 
-        // to big query
-        rows.apply("Write to BigQuery", BigQueryIO.<Row>write().to(options.getTable()) // [optioins.getTable()]
-                .useBeamSchema()
+        // write to big query
+        tableRows.apply("Write to BigQuery", BigQueryIO.<TableRow>write().to(options.getTable()) // [optioins.getTable()]
+                .withSchema(tableSchema)
                 .withWriteDisposition(BigQueryIO.Write.WriteDisposition.WRITE_APPEND)
                 .withCreateDisposition(BigQueryIO.Write.CreateDisposition.CREATE_IF_NEEDED));
         /*
@@ -233,9 +274,8 @@ public class BeamPipeline {
         // test write to file
         // rawTweets.apply(TextIO.write().to("/tmp/tweets").withWindowedWrites().withNumShards(1).withSuffix(".txt"));
 
-
         pipeline.run().waitUntilFinish();
     }
 
-
 }
+
