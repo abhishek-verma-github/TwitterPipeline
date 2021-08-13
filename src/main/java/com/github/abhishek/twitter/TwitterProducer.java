@@ -110,10 +110,10 @@ public class TwitterProducer {
 
     public Client createTwitterClient(BlockingQueue<String> msgQueue,List<String> terms){
         // define auth keys
-        final String consumerKey = "Twr1E97gPG9lizAlBbLOvkQfG";
-        final String consumerSecret = "2WlgIrDIDLQ5yX7ZlXZUwxK4pRvURYjuWsdpqbte93zeQy0ODc";
-        final String token = "3536992812-dgY3uaS1ohEGOC7cTfylMIXcOMq2DZ56KV2g0np";
-        final String secret = "1sPuhapCwhwCK40Wb2A6IBUjioQDsMJhknWBlPafM7ttK";
+        final String consumerKey = "";
+        final String consumerSecret = "";
+        final String token = "";
+        final String secret = "";
 
 //        BlockingQueue<Event> eventQueue = new LinkedBlockingQueue<>(1000);
 
